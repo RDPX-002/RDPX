@@ -22,7 +22,6 @@ jobs:
             xfce4-goodies \
             tightvncserver \
             curl \
-            cloudflared \
             x11vnc \
             xvfb \
             sudo
@@ -43,11 +42,12 @@ jobs:
           sleep 3
           sudo tightvncserver :1 -geometry 1920x1080 -depth 24 &  # Run VNC server in the background
 
-      - name: Install Cloudflared
+      - name: Install cloudflared
         run: |
-          curl -LO https://github.com/cloudflare/cloudflared/releases/download/2022.11.3/cloudflared-linux-amd64
+          curl -LO https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
           sudo mv cloudflared-linux-amd64 /usr/local/bin/cloudflared
           sudo chmod +x /usr/local/bin/cloudflared
+          cloudflared --version  # Verify installation
 
       - name: Run Cloudflare Tunnel
         run: |
