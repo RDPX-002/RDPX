@@ -44,12 +44,22 @@ jobs:
           tightvncserver :1 -geometry 1920x1080
           sleep 5
           # Verify VNC server
+          echo "Checking VNC server status..."
+          netstat -tulnp | grep ":5901" || echo "No VNC server on :5901"
           if netstat -tulnp | grep -q ":5901"; then
             echo "=== VNC Server Running on :5901 ==="
           else
-            echo "=== VNC Server Failed to Start ==="
-            ps aux | grep vnc
-            exit 1
+            echo "=== VNC Server Failed to Start, Retrying ==="
+            tightvncserver -kill :1 || true
+            tightvncserver :1 -geometry 1920x1080
+            sleep 5
+            if netstat -tulnp | grep -q ":5901"; then
+              echo "=== VNC Server Started on Retry ==="
+            else
+              echo "=== VNC Server Still Not Running ==="
+              ps aux | grep vnc
+              exit 1
+            fi
           fi
 
       - name: Setup Cloudflare Tunnel
@@ -66,14 +76,15 @@ jobs:
           cloudflared tunnel --url localhost:5901 --no-autoupdate > tunnel.log 2>&1 &
           sleep 15
           
-          # Capture random subdomain
+          # Capture random subdomain and log tunnel details
+          echo "Tunnel log contents:"
+          cat tunnel.log
           TUNNEL_URL=$(cat tunnel.log | grep -o 'https://[0-9a-zA-Z-]\+\.trycloudflare\.com' | head -n 1)
           if [ -n "$TUNNEL_URL" ]; then
             echo "=== Cloudflare Tunnel Established ==="
             echo "VNC URL: vnc://$(echo $TUNNEL_URL | sed 's/https:\/\///'):5901"
           else
             echo "=== Failed to get Cloudflare Tunnel URL ==="
-            cat tunnel.log
             exit 1
           fi
 
@@ -85,4 +96,16 @@ jobs:
           echo "USERNAME: root"
           echo "PASSWORD: admin@123"
           echo "-----------------------------"
-          sleep 21600 # 6 hours
+          # Verify VNC server periodically
+          for i in {1..720}; do
+            if netstat -tulnp | grep -q ":5901"; then
+              echo "VNC server still running on :5901"
+            else
+              echo "VNC server stopped, restarting..."
+              tightvncserver -kill :1 || true
+              tightvncserver :1 -geometry 1920x1080
+              sleep 5
+              netstat -tulnp | grep ":5901" || echo "VNC server failed to restart"
+            fi
+            sleep 30
+          done
