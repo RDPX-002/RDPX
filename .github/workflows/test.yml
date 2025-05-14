@@ -1,75 +1,65 @@
-name: VNC with TryCloudflare
+name: Setup VNC Server with Cloudflare Tunnel
 
 on:
   push:
     branches:
       - main
-  workflow_dispatch:
 
 jobs:
   setup-vnc:
     runs-on: ubuntu-latest
-    timeout-minutes: 360 # 6 hours
+    timeout-minutes: 360  # 6 hours
 
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v2
 
-      - name: Install XFCE and TigerVNC
+      - name: Install dependencies
         run: |
-          echo "::group::Installing Dependencies"
-          sudo apt-get update
-          sudo apt-get install -y xfce4 xfce4-goodies tigervnc-standalone-server tigervnc-common
-          echo "::endgroup::"
+          sudo apt update
+          sudo apt install -y \
+            xfce4 \
+            xfce4-goodies \
+            tightvncserver \
+            curl \
+            cloudflared \
+            x11vnc \
+            xvfb \
+            sudo
 
-      - name: Set Root Password
+      - name: Set root password
         run: |
-          echo "::group::Setting Root Password"
           echo "root:admin@123" | sudo chpasswd
-          echo "::endgroup::"
+          echo "VNC password set to 'admin@123'"
 
-      - name: Configure VNC
+      - name: Start VNC Server
         run: |
-          echo "::group::Configuring VNC"
-          mkdir -p ~/.vnc
-          echo "admin@123" | vncpasswd -f > ~/.vnc/passwd
-          chmod 600 ~/.vnc/passwd
-          echo -e "#!/bin/sh\nxrdb $HOME/.Xresources\nstartxfce4 &" > ~/.vnc/xstartup
-          chmod +x ~/.vnc/xstartup
-          vncserver :1 -geometry 1920x1080 -depth 24
-          echo "::endgroup::"
+          export DISPLAY=:1
+          export X11VNC_PASSWORD=admin@123
+          export VNC_PORT=5901
+          sudo Xvfb :1 -screen 0 1920x1080x24 &
+          sleep 3
+          sudo x11vnc -display :1 -passwd $X11VNC_PASSWORD -forever -shared &
+          sleep 3
+          sudo tightvncserver :1 -geometry 1920x1080 -depth 24
+        background: true
 
       - name: Install Cloudflared
         run: |
-          echo "::group::Installing Cloudflared"
-          wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
-          sudo dpkg -i cloudflared-linux-amd64.deb
-          echo "::endgroup::"
+          curl -LO https://github.com/cloudflare/cloudflared/releases/download/2022.11.3/cloudflared-linux-amd64
+          sudo mv cloudflared-linux-amd64 /usr/local/bin/cloudflared
+          sudo chmod +x /usr/local/bin/cloudflared
 
-      - name: Start Cloudflared Tunnel
+      - name: Run Cloudflare Tunnel
         run: |
-          echo "::group::Starting Cloudflared Tunnel"
-          cloudflared tunnel --url vnc://localhost:5901 &
-          sleep 10 # Wait for tunnel to initialize
-          TUNNEL_URL=$(curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels[0].public_url')
-          echo "VNC Tunnel URL: $TUNNEL_URL"
-          echo "::endgroup::"
+          cloudflared tunnel --url http://localhost:5901 &
+          sleep 5
+          tunnel_ip=$(curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels[0].public_url')
+          echo "Cloudflare Tunnel IP:PORT: $tunnel_ip"
 
-      - name: Display Access Details
+      - name: Keep Alive and Display Tunnel IP
         run: |
-          echo "::group::Access Details"
-          echo "VNC URL: $TUNNEL_URL"
-          echo "User: root"
-          echo "Password: admin@123"
-          echo "Resolution: 1920x1080"
-          echo "Note: Access the VNC server using a VNC client with the above URL, user, and password."
-          echo "::endgroup::"
-
-      - name: Keep Alive
-        run: |
-          echo "::group::Keeping Workflow Alive"
-          for i in {1..21600}; do # 6 hours = 21600 seconds
-            echo "Keeping alive... ($i/21600)"
-            sleep 1
-          done
-          echo "::endgroup::"
+          echo "VNC Server and Cloudflare Tunnel are running."
+          echo "Access VNC at: $tunnel_ip"
+          echo "Tunnel IP:PORT is $tunnel_ip"
+          while true; do sleep 3600; done
