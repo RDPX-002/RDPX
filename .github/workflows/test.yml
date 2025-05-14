@@ -41,8 +41,7 @@ jobs:
           sleep 3
           sudo x11vnc -display :1 -passwd $X11VNC_PASSWORD -forever -shared &
           sleep 3
-          sudo tightvncserver :1 -geometry 1920x1080 -depth 24
-        background: true
+          sudo tightvncserver :1 -geometry 1920x1080 -depth 24 &  # Run VNC server in the background
 
       - name: Install Cloudflared
         run: |
@@ -62,4 +61,4 @@ jobs:
           echo "VNC Server and Cloudflare Tunnel are running."
           echo "Access VNC at: $tunnel_ip"
           echo "Tunnel IP:PORT is $tunnel_ip"
-          while true; do sleep 3600; done
+          while true; do sleep 3600; done  # Keep alive for 6 hours
