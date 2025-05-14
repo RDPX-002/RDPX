@@ -1,53 +1,75 @@
-name: Setup Server with XFCE, VNC, and TryCloudflare Tunneling
+name: VNC with TryCloudflare
 
 on:
-  workflow_dispatch:  # Allows manual triggering of the workflow
+  push:
+    branches:
+      - main
+  workflow_dispatch:
 
 jobs:
-  setup-server:
-    runs-on: ubuntu-20.04
-    timeout-minutes: 360  # 6 hours
+  setup-vnc:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360 # 6 hours
 
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v2
+      - name: Checkout Repository
+        uses: actions/checkout@v4
 
-    - name: Update and Install Dependencies
-      run: |
-        sudo apt-get update -y
-        sudo apt-get install -y xfce4 tightvncserver wget curl git
+      - name: Install XFCE and TigerVNC
+        run: |
+          echo "::group::Installing Dependencies"
+          sudo apt-get update
+          sudo apt-get install -y xfce4 xfce4-goodies tigervnc-standalone-server tigervnc-common
+          echo "::endgroup::"
 
-    - name: Set Root Password
-      run: |
-        echo "root:admin@123" | sudo chpasswd
+      - name: Set Root Password
+        run: |
+          echo "::group::Setting Root Password"
+          echo "root:admin@123" | sudo chpasswd
+          echo "::endgroup::"
 
-    - name: Configure VNC
-      run: |
-        echo "admin@123" | vncpasswd -f > ~/.vnc/passwd
-        chmod 600 ~/.vnc/passwd
-        tightvncserver :1 -geometry 1920x1080 -depth 24
+      - name: Configure VNC
+        run: |
+          echo "::group::Configuring VNC"
+          mkdir -p ~/.vnc
+          echo "admin@123" | vncpasswd -f > ~/.vnc/passwd
+          chmod 600 ~/.vnc/passwd
+          echo -e "#!/bin/sh\nxrdb $HOME/.Xresources\nstartxfce4 &" > ~/.vnc/xstartup
+          chmod +x ~/.vnc/xstartup
+          vncserver :1 -geometry 1920x1080 -depth 24
+          echo "::endgroup::"
 
-    - name: Install TryCloudflare
-      run: |
-        wget https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -O /usr/local/bin/cloudflared
-        chmod +x /usr/local/bin/cloudflared
+      - name: Install Cloudflared
+        run: |
+          echo "::group::Installing Cloudflared"
+          wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
+          sudo dpkg -i cloudflared-linux-amd64.deb
+          echo "::endgroup::"
 
-    - name: Start TryCloudflare Tunnel
-      run: |
-        nohup cloudflared tunnel --url localhost:5901 > /var/log/cloudflared.log 2>&1 &
+      - name: Start Cloudflared Tunnel
+        run: |
+          echo "::group::Starting Cloudflared Tunnel"
+          cloudflared tunnel --url vnc://localhost:5901 &
+          sleep 10 # Wait for tunnel to initialize
+          TUNNEL_URL=$(curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels[0].public_url')
+          echo "VNC Tunnel URL: $TUNNEL_URL"
+          echo "::endgroup::"
 
-    - name: Wait for Tunnel to Establish
-      run: |
-        sleep 10  # Wait for tunnel to start
-        TUNNEL_URL=$(grep -o 'https://[^ ]*.trycloudflare.com' /var/log/cloudflared.log)
-        echo "Tunnel URL: $TUNNEL_URL"
-        echo "VNC User: root"
-        echo "VNC Password: admin@123"
-        echo "Access VNC via: $TUNNEL_URL"
+      - name: Display Access Details
+        run: |
+          echo "::group::Access Details"
+          echo "VNC URL: $TUNNEL_URL"
+          echo "User: root"
+          echo "Password: admin@123"
+          echo "Resolution: 1920x1080"
+          echo "Note: Access the VNC server using a VNC client with the above URL, user, and password."
+          echo "::endgroup::"
 
-    - name: Keep Alive
-      run: |
-        END_TIME=$(( $(date +%s) + 21600 ))  # 6 hours in seconds
-        while [ $(date +%s) -lt $END_TIME ]; do
-          sleep 60
-        done
+      - name: Keep Alive
+        run: |
+          echo "::group::Keeping Workflow Alive"
+          for i in {1..21600}; do # 6 hours = 21600 seconds
+            echo "Keeping alive... ($i/21600)"
+            sleep 1
+          done
+          echo "::endgroup::"
