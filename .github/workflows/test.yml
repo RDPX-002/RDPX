@@ -1,111 +1,53 @@
-name: VNC with XFCE and Cloudflare Tunnel
+name: Setup Server with XFCE, VNC, and TryCloudflare Tunneling
 
 on:
-  workflow_dispatch:
-  push:
-    branches:
-      - main
+  workflow_dispatch:  # Allows manual triggering of the workflow
 
 jobs:
-  setup-vnc:
-    runs-on: ubuntu-latest
-    timeout-minutes: 360 # 6 hours
+  setup-server:
+    runs-on: ubuntu-20.04
+    timeout-minutes: 360  # 6 hours
 
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
+    - name: Checkout code
+      uses: actions/checkout@v2
 
-      - name: Install Dependencies
-        run: |
-          echo "=== Installing Dependencies ==="
-          sudo apt-get update -y
-          sudo apt-get install -y \
-            xfce4 xfce4-goodies \
-            tightvncserver \
-            net-tools \
-            curl
-          echo "=== Dependencies Installed ==="
+    - name: Update and Install Dependencies
+      run: |
+        sudo apt-get update -y
+        sudo apt-get install -y xfce4 tightvncserver wget curl git
 
-      - name: Set Root Password
-        run: |
-          echo "=== Setting Root Password ==="
-          echo "root:admin@123" | sudo chpasswd
-          echo "=== Root Password Set ==="
+    - name: Set Root Password
+      run: |
+        echo "root:admin@123" | sudo chpasswd
 
-      - name: Configure and Start VNC Server
-        run: |
-          echo "=== Configuring VNC Server ==="
-          mkdir -p ~/.vnc
-          echo "admin@123" | vncpasswd -f > ~/.vnc/passwd
-          chmod 600 ~/.vnc/passwd
-          echo '#!/bin/bash' > ~/.vnc/xstartup
-          echo 'startxfce4 &' >> ~/.vnc/xstartup
-          chmod +x ~/.vnc/xstartup
-          tightvncserver :1 -geometry 1920x1080
-          sleep 5
-          # Verify VNC server
-          echo "Checking VNC server status..."
-          netstat -tulnp | grep ":5901" || echo "No VNC server on :5901"
-          if netstat -tulnp | grep -q ":5901"; then
-            echo "=== VNC Server Running on :5901 ==="
-          else
-            echo "=== VNC Server Failed to Start, Retrying ==="
-            tightvncserver -kill :1 || true
-            tightvncserver :1 -geometry 1920x1080
-            sleep 5
-            if netstat -tulnp | grep -q ":5901"; then
-              echo "=== VNC Server Started on Retry ==="
-            else
-              echo "=== VNC Server Still Not Running ==="
-              ps aux | grep vnc
-              exit 1
-            fi
-          fi
+    - name: Configure VNC
+      run: |
+        echo "admin@123" | vncpasswd -f > ~/.vnc/passwd
+        chmod 600 ~/.vnc/passwd
+        tightvncserver :1 -geometry 1920x1080 -depth 24
 
-      - name: Setup Cloudflare Tunnel
-        run: |
-          echo "=== Setting Up Cloudflare Tunnel ==="
-          # Install cloudflared
-          curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg | sudo tee /usr/share/keyrings/cloudflare-main.gpg >/dev/null
-          echo "deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared focal main" | sudo tee /etc/apt/sources.list.d/cloudflared.list
-          sudo apt-get update -y
-          sudo apt-get install -y cloudflared
-          
-          # Start TryCloudflare tunnel
-          echo "Starting Cloudflare TryCloudflare tunnel..."
-          cloudflared tunnel --url localhost:5901 --no-autoupdate > tunnel.log 2>&1 &
-          sleep 15
-          
-          # Capture random subdomain and log tunnel details
-          echo "Tunnel log contents:"
-          cat tunnel.log
-          TUNNEL_URL=$(cat tunnel.log | grep -o 'https://[0-9a-zA-Z-]\+\.trycloudflare\.com' | head -n 1)
-          if [ -n "$TUNNEL_URL" ]; then
-            echo "=== Cloudflare Tunnel Established ==="
-            echo "VNC URL: vnc://$(echo $TUNNEL_URL | sed 's/https:\/\///'):5901"
-          else
-            echo "=== Failed to get Cloudflare Tunnel URL ==="
-            exit 1
-          fi
+    - name: Install TryCloudflare
+      run: |
+        wget https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -O /usr/local/bin/cloudflared
+        chmod +x /usr/local/bin/cloudflared
 
-      - name: Keep Workflow Alive
-        run: |
-          echo "=== Keeping Workflow Alive for 6 Hours ==="
-          TUNNEL_URL=$(cat tunnel.log | grep -o 'https://[0-9a-zA-Z-]\+\.trycloudflare\.com' | head -n 1)
-          echo "Alamat: vnc://$(echo $TUNNEL_URL | sed 's/https:\/\///'):5901"
-          echo "USERNAME: root"
-          echo "PASSWORD: admin@123"
-          echo "-----------------------------"
-          # Verify VNC server periodically
-          for i in {1..720}; do
-            if netstat -tulnp | grep -q ":5901"; then
-              echo "VNC server still running on :5901"
-            else
-              echo "VNC server stopped, restarting..."
-              tightvncserver -kill :1 || true
-              tightvncserver :1 -geometry 1920x1080
-              sleep 5
-              netstat -tulnp | grep ":5901" || echo "VNC server failed to restart"
-            fi
-            sleep 30
-          done
+    - name: Start TryCloudflare Tunnel
+      run: |
+        nohup cloudflared tunnel --url localhost:5901 > /var/log/cloudflared.log 2>&1 &
+
+    - name: Wait for Tunnel to Establish
+      run: |
+        sleep 10  # Wait for tunnel to start
+        TUNNEL_URL=$(grep -o 'https://[^ ]*.trycloudflare.com' /var/log/cloudflared.log)
+        echo "Tunnel URL: $TUNNEL_URL"
+        echo "VNC User: root"
+        echo "VNC Password: admin@123"
+        echo "Access VNC via: $TUNNEL_URL"
+
+    - name: Keep Alive
+      run: |
+        END_TIME=$(( $(date +%s) + 21600 ))  # 6 hours in seconds
+        while [ $(date +%s) -lt $END_TIME ]; do
+          sleep 60
+        done
