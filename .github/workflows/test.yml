@@ -1,0 +1,79 @@
+name: VNC with XFCE and Cloudflare Tunnel
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  setup-vnc:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360 # 6 hours
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Cloudflare Tunnel
+        run: |
+          echo "=== Setting Up Cloudflare Tunnel ==="
+          # Install cloudflared
+          sudo apt-get update -y
+          curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg | sudo tee /usr/share/keyrings/cloudflare-main.gpg >/dev/null
+          echo "deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared focal main" | sudo tee /etc/apt/sources.list.d/cloudflared.list
+          sudo apt-get update -y
+          sudo apt-get install -y cloudflared
+          
+          # Start TryCloudflare tunnel
+          echo "Starting Cloudflare TryCloudflare tunnel..."
+          cloudflared tunnel --url localhost:5901 --no-autoupdate > tunnel.log 2>&1 &
+          sleep 10
+          
+          # Capture random subdomain
+          TUNNEL_URL=$(cat tunnel.log | grep -o 'https://[0-9a-zA-Z-]\+\.trycloudflare\.com' | head -n 1)
+          if [ -n "$TUNNEL_URL" ]; then
+            echo "=== Cloudflare Tunnel Established ==="
+            echo "VNC URL: vnc://$(echo $TUNNEL_URL | sed 's/https:\/\///'):5901"
+          else
+            echo "=== Failed to get Cloudflare Tunnel URL ==="
+            cat tunnel.log
+            exit 1
+          fi
+
+      - name: Install Dependencies
+        run: |
+          echo "=== Installing Dependencies ==="
+          sudo apt-get install -y \
+            xfce4 xfce4-goodies \
+            tightvncserver \
+            net-tools
+          echo "=== Dependencies Installed ==="
+
+      - name: Set Root Password
+        run: |
+          echo "=== Setting Root Password ==="
+          echo "root:admin@123" | sudo chpasswd
+          echo "=== Root Password Set ==="
+
+      - name: Configure VNC Server
+        run: |
+          echo "=== Configuring VNC Server ==="
+          mkdir -p ~/.vnc
+          echo "admin@123" | vncpasswd -f > ~/.vnc/passwd
+          chmod 600 ~/.vnc/passwd
+          echo '#!/bin/bash' > ~/.vnc/xstartup
+          echo 'startxfce4 &' >> ~/.vnc/xstartup
+          chmod +x ~/.vnc/xstartup
+          tightvncserver :1 -geometry 1920x1080
+          echo "=== VNC Server Started on :1 ==="
+
+      - name: Keep Workflow Alive
+        run: |
+          echo "=== Keeping Workflow Alive for 6 Hours ==="
+          TUNNEL_URL=$(cat tunnel.log | grep -o 'https://[0-9a-zA-Z-]\+\.trycloudflare\.com' | head -n 1)
+          echo "Alamat: vnc://$(echo $TUNNEL_URL | sed 's/https:\/\///'):5901"
+          echo "USERNAME: root"
+          echo "PASSWORD: admin@123"
+          echo "-----------------------------"
+          sleep 21600 # 6 hours
